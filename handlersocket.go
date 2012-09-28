@@ -84,9 +84,9 @@ func packFields(fields ...[]byte) []byte {
   return line
 }
 
-func (hs *HandlerSocket) Request(reqType int, fields ...[]byte) []byte {
+func (hs *HandlerSocket) Request(reqType int, fields ...[]byte) [][]byte {
   line := packFields(fields...)
-  verbose("== Request == %s | %#v\n", line, line)
+  verbose("->->->-> %s | %#v\n", line, line)
   var response []byte
   var err error
   if reqType == tRd {
@@ -99,5 +99,6 @@ func (hs *HandlerSocket) Request(reqType int, fields ...[]byte) []byte {
   if err != nil {
     log.Fatal("query error")
   }
-  return response
+  verbose("<=<=<=<= %s | %#v\n", response, response)
+  return split(response)
 }
