@@ -70,13 +70,18 @@ const (
   tRw
 )
 
-func packFields(fields ...[]byte) []byte {
+func packFields(fields ...interface{}) []byte {
   encodedFields := make([][]byte, 0)
   for _, v := range fields {
-    if v == nil {
+    switch v.(type) {
+    case nil:
       encodedFields = append(encodedFields, NULL)
-    } else {
-      encodedFields = append(encodedFields, encode(v))
+    case string:
+      encodedFields = append(encodedFields, encode([]byte(v.(string))))
+    case []byte:
+      encodedFields = append(encodedFields, encode(v.([]byte)))
+    case int:
+      encodedFields = append(encodedFields, encode([]byte(strconv.Itoa(v.(int)))))
     }
   }
   line := bytes.Join(encodedFields, FIELDSEP)
@@ -84,7 +89,7 @@ func packFields(fields ...[]byte) []byte {
   return line
 }
 
-func (hs *HandlerSocket) Request(reqType int, fields ...[]byte) [][]byte {
+func (hs *HandlerSocket) Request(reqType int, fields ...interface{}) [][]byte {
   line := packFields(fields...)
   verbose("->->->-> %s | %#v\n", line, line)
   var response []byte
@@ -101,4 +106,17 @@ func (hs *HandlerSocket) Request(reqType int, fields ...[]byte) [][]byte {
   }
   verbose("<=<=<=<= %s | %#v\n", response, response)
   return split(response)
+}
+
+func (hs *HandlerSocket) Rd(fields ...interface{}) [][]byte {
+  return hs.Request(tRd, fields...)
+}
+
+func (hs *HandlerSocket) Rw(fields ...interface{}) [][]byte {
+  return hs.Request(tRw, fields...)
+}
+
+func (hs *HandlerSocket) Close() {
+  hs.rdConn.Close()
+  hs.rwConn.Close()
 }
