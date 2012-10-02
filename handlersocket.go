@@ -4,9 +4,9 @@ import (
   "bytes"
   "net"
   "strconv"
-  "log"
   "bufio"
   "fmt"
+  "strings"
 )
 
 var (
@@ -42,20 +42,24 @@ func split(line []byte) [][]byte {
   return bytes.Split(line, FIELDSEP)
 }
 
-func New(addr string, rdPort int, rwPort int) *HandlerSocket {
-  hs := new(HandlerSocket)
+func New(addr string, rdPort int, rwPort int) (*HandlerSocket, error) {
+  self := &HandlerSocket{
+    indexIdChan: make(chan *indexIdQuery),
+    indexIdEnd: make(chan bool),
+  }
   var err error
-  hs.rdConn, err = net.Dial("tcp", addr + ":" + strconv.Itoa(rdPort))
+  self.rdConn, err = net.Dial("tcp", addr + ":" + strconv.Itoa(rdPort))
   if err != nil {
-    log.Fatal("connect error")
+    return nil, err
   }
-  hs.rwConn, err = net.Dial("tcp", addr + ":" + strconv.Itoa(rwPort))
+  self.rwConn, err = net.Dial("tcp", addr + ":" + strconv.Itoa(rwPort))
   if err != nil {
-    log.Fatal("connect error")
+    return nil, err
   }
-  hs.rdReader = bufio.NewReader(hs.rdConn)
-  hs.rwReader = bufio.NewReader(hs.rwConn)
-  return hs
+  self.rdReader = bufio.NewReader(self.rdConn)
+  self.rwReader = bufio.NewReader(self.rwConn)
+  self.startIndexProvider()
+  return self, nil
 }
 
 type HandlerSocket struct {
@@ -63,6 +67,13 @@ type HandlerSocket struct {
   rwConn net.Conn
   rdReader *bufio.Reader
   rwReader *bufio.Reader
+  indexIdChan chan *indexIdQuery
+  indexIdEnd chan bool
+}
+
+type indexIdQuery struct {
+  signature string
+  ret chan int
 }
 
 const (
@@ -89,34 +100,86 @@ func packFields(fields ...interface{}) []byte {
   return line
 }
 
-func (hs *HandlerSocket) Request(reqType int, fields ...interface{}) [][]byte {
+func (self *HandlerSocket) Request(reqType int, fields ...interface{}) ([][]byte, error) {
   line := packFields(fields...)
   verbose("->->->-> %s | %#v\n", line, line)
   var response []byte
   var err error
   if reqType == tRd {
-    hs.rdConn.Write(line)
-    response, err = hs.rdReader.ReadBytes(LINEFEED)
+    self.rdConn.Write(line)
+    response, err = self.rdReader.ReadBytes(LINEFEED)
   } else {
-    hs.rwConn.Write(line)
-    response, err = hs.rwReader.ReadBytes(LINEFEED)
+    self.rwConn.Write(line)
+    response, err = self.rwReader.ReadBytes(LINEFEED)
   }
   if err != nil {
-    log.Fatal("query error")
+    return nil, err
   }
   verbose("<=<=<=<= %s | %#v\n", response, response)
-  return split(response)
+  return split(response), nil
 }
 
-func (hs *HandlerSocket) Rd(fields ...interface{}) [][]byte {
-  return hs.Request(tRd, fields...)
+func (self *HandlerSocket) Rd(fields ...interface{}) ([][]byte, error) {
+  return self.Request(tRd, fields...)
 }
 
-func (hs *HandlerSocket) Rw(fields ...interface{}) [][]byte {
-  return hs.Request(tRw, fields...)
+func (self *HandlerSocket) Rw(fields ...interface{}) ([][]byte, error) {
+  return self.Request(tRw, fields...)
 }
 
-func (hs *HandlerSocket) Close() {
-  hs.rdConn.Close()
-  hs.rwConn.Close()
+func (self *HandlerSocket) Close() {
+  self.rdConn.Close()
+  self.rwConn.Close()
+  self.indexIdEnd <- true
+}
+
+func (self *HandlerSocket) OpenIndex(dbname string, tablename string, indexname string, columns ...string) int {
+  retChan := make(chan int, 1)
+  self.indexIdChan <- &indexIdQuery{genSignature(dbname, tablename, indexname, columns...), retChan}
+  indexId := <-retChan
+  response, err := self.Rd("P", strconv.Itoa(indexId), dbname, tablename, indexname, strings.Join(columns, ","))
+  if err != nil {
+    return -1
+  }
+  if bytes.Compare(response[0], []byte("0")) != 0 || bytes.Compare(response[1], []byte("1")) != 0 {
+    return -1
+  }
+  response, err = self.Rw("P", strconv.Itoa(indexId), dbname, tablename, indexname, strings.Join(columns, ","))
+  if err != nil {
+    return -1
+  }
+  if bytes.Compare(response[0], []byte("0")) != 0 || bytes.Compare(response[1], []byte("1")) != 0 {
+    return -1
+  }
+  return indexId
+}
+
+func (self *HandlerSocket) startIndexProvider() {
+  go func() {
+    index := 1
+    mapping := make(map[string]int)
+    for {
+      select {
+      case req := <-self.indexIdChan:
+        i, exists := mapping[req.signature]
+        if exists {
+          req.ret <- i
+        } else {
+          mapping[req.signature] = index
+          req.ret <- index
+          index++
+        }
+      case <-self.indexIdEnd:
+        break
+      }
+    }
+  }()
+}
+
+func genSignature(dbname string, tablename string, indexname string, columns ...string) (sig string) {
+  sig += dbname + tablename + indexname
+  for _, column := range columns {
+    sig += column
+  }
+  return sig
 }

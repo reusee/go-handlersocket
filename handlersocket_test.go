@@ -76,9 +76,9 @@ func TestPackFields(t *testing.T) {
   }
 }
 
-func TestOpenIndex(t *testing.T) {
-  hs := New("localhost", rdPort, rwPort)
-  response := hs.Request(tRd, []byte("P"), []byte("1"), []byte("test"), []byte("kvs"), []byte("PRIMARY"),
+func TestOpenIndexProtocol(t *testing.T) {
+  hs, _ := New("localhost", rdPort, rwPort)
+  response, _ := hs.Request(tRd, []byte("P"), []byte("1"), []byte("test"), []byte("kvs"), []byte("PRIMARY"),
     []byte("content"), []byte("id"))
   if !equal(response, []string{"0", "1"}) {
     t.Fail()
@@ -86,11 +86,11 @@ func TestOpenIndex(t *testing.T) {
 }
 
 func TestInsert(t *testing.T) {
-  hs := New("localhost", rdPort, rwPort)
+  hs, _ := New("localhost", rdPort, rwPort)
   hs.Request(tRw, []byte("P"), []byte("1"), []byte("test"), []byte("kvs"), []byte("PRIMARY"), []byte("id,content"))
   for i := 0; i < 20; i++ {
     id := strconv.FormatInt(time.Now().UnixNano(), 10)
-    resp := hs.Request(tRw, []byte("1"), []byte("+"), []byte("2"), []byte(id), []byte("CONTENT"))
+    resp, _ := hs.Request(tRw, []byte("1"), []byte("+"), []byte("2"), []byte(id), []byte("CONTENT"))
     if !equal(resp, []string{"0", "1"}) {
       t.Fail()
     }
@@ -98,8 +98,21 @@ func TestInsert(t *testing.T) {
 }
 
 func TestGetting(t *testing.T) {
-  hs := New("localhost", rdPort, rwPort)
+  hs, _ := New("localhost", rdPort, rwPort)
   hs.Request(tRd, []byte("P"), []byte("1"), []byte("test"), []byte("kvs"), []byte("PRIMARY"), []byte("id,content"))
   hs.Request(tRd, []byte("1"), []byte("="), []byte("1"), []byte("ID"))
   hs.Request(tRd, []byte("1"), []byte("="), []byte("1"), []byte("你好啊"))
+}
+
+func TestGenSignature(t *testing.T) {
+  fmt.Printf("%s\n", genSignature("Dbname", "Tablename", "Indexname", "f1", "f9", "f3"))
+}
+
+func TestOpenIndex(t *testing.T) {
+  hs, _ := New("localhost", rdPort, rwPort)
+  id1 := hs.OpenIndex("test", "kvs", "PRIMARY", "id", "content")
+  id2 := hs.OpenIndex("test", "kvs", "PRIMARY", "id", "content")
+  if id1 != id2 {
+    t.Fail()
+  }
 }
